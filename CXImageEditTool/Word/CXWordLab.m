@@ -70,7 +70,9 @@
 
 #pragma mark ********* EventResponse *********
 - (void)clickClose {
-    [self removeFromSuperview];
+    if (self.closeBlock) {
+        self.closeBlock();
+    }
 }
 
 #pragma mark ********* PublicMethod *********
@@ -88,6 +90,10 @@
 
 - (void)hideBorder {
     [self performSelector:@selector(_hideBorder) withObject:nil afterDelay:1.5];
+}
+
+- (void)hideBorderRightNow {
+    [self _hideBorder];
 }
 
 - (void)_hideBorder {

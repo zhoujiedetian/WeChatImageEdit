@@ -65,6 +65,8 @@
 @property(nonatomic, strong) CXMosaicView *mosaicVi;
 
 @property(nonatomic, strong) UIView *editIgvContainer;
+//用于保存添加的文字
+@property(nonatomic, strong) NSMutableArray *wordsArr;
 @end
 
 @implementation CXImageEditView
@@ -129,6 +131,7 @@
     _toolSelectedImages = @[@"pen_selected", @"word_selected", @"crop_selected", @"mosaic_selected"];
     //颜色集合
     _colorsArr = @[CXUIColorFromRGB(0xffffff), CXUIColorFromRGB(0x000000), CXUIColorFromRGB(0xF5222D), CXUIColorFromRGB(0xFADB14), CXUIColorFromRGB(0x1890FF), CXUIColorFromRGB(0x52C41A), CXUIColorFromRGB(0x722ED1)];
+    _wordsArr = [NSMutableArray array];
     //默认涂鸦颜色为红色
     _selectColorIndex = 2;
     //默认没有选中工具栏里的任何一项
@@ -356,7 +359,7 @@
         if (indexPath.row == 2) {
             
             //隐藏工具栏
-            [self clickEditImage];
+//            [self clickEditImage];
             
             //截图
             CXCropFunctionView *cropVi = [[CXCropFunctionView alloc]initWithFrame:CGRectMake(0, 0, kScreenWidth, kScreenHeight) image:[self _generateImage]];
@@ -485,11 +488,18 @@
     wordLab.textColor = textColor;
     wordLab.text = text;
     wordLab.isShowBackgroundVi = isShowBg;
+    __weak typeof(wordLab) weakWord = wordLab;
+    __weak typeof(self) weakSelf = self;
+    wordLab.closeBlock = ^{
+        [weakSelf.wordsArr removeObject:weakWord];
+        [weakWord removeFromSuperview];
+    };
     wordLab.center = CGPointMake(self.editIgv.bounds.size.width / 2, self.editIgv.bounds.size.height / 2);
     CGSize size = [wordLab sizeThatFits:CGSizeMake(kScreenWidth, kScreenHeight)];
     wordLab.bounds = CGRectMake(0, 0, size.width, size.height);
     [wordLab showBorderAutoHide];
     [self.editIgv addSubview:wordLab];
+    [self.wordsArr addObject:wordLab];
     
     UIPanGestureRecognizer *wordPan = [[UIPanGestureRecognizer alloc]initWithTarget:self action:@selector(panWordVi:)];
     wordPan.maximumNumberOfTouches = 1;
@@ -722,6 +732,11 @@
 
 //生成合成图片
 - (UIImage *)_generateImage {
+    if (_wordsArr.count > 0) {
+        for (CXWordLab *wordLab in _wordsArr) {
+            [wordLab hideBorderRightNow];
+        }
+    }
     CGSize contextSize = self.editIgv.bounds.size;
     UIGraphicsBeginImageContextWithOptions(contextSize, YES, 0);
     [self.editIgv drawViewHierarchyInRect:CGRectMake(0, 0, contextSize.width, contextSize.height) afterScreenUpdates:YES];
@@ -732,6 +747,11 @@
 
 //生成全屏的合成图片
 - (UIImage *)_generateFullScreenImage {
+    if (_wordsArr.count > 0) {
+        for (CXWordLab *wordLab in _wordsArr) {
+            [wordLab hideBorder];
+        }
+    }
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(kScreenWidth, kScreenHeight), YES, 0);
     CGSize imageSize = self.editIgv.bounds.size;
     CGFloat y = (kScreenHeight - imageSize.height) / 2;
