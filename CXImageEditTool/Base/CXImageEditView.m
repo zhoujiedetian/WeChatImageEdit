@@ -782,6 +782,9 @@
         _scrollVi.minimumZoomScale = 1;
         _scrollVi.showsVerticalScrollIndicator = NO;
         _scrollVi.showsHorizontalScrollIndicator = NO;
+        if (@available(iOS 11.0, *)) {
+            _scrollVi.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+        }
     }
     return _scrollVi;
 }
