@@ -13,7 +13,9 @@
 #import "CXWordView.h"
 #import "CXWordLab.h"
 #import "CXMosaicView.h"
-#import "CXCropFunctionView.h"
+#import "CXCropFunctionBar.h"
+#import "CXCropCase.h"
+#import "CXEditModel.h"
 
 #define kAlphaAnimationDuration 0.15
 //工具栏数量
@@ -66,7 +68,17 @@
 
 @property(nonatomic, strong) UIView *editIgvContainer;
 //用于保存添加的文字
-@property(nonatomic, strong) NSMutableArray *wordsArr;
+//@property(nonatomic, strong) NSMutableArray *wordsArr;
+//剪裁功能底部按钮
+@property(nonatomic, strong) CXCropFunctionBar *cropFunctionBar;
+//是否为编辑模式
+@property(nonatomic, assign) BOOL isEditMode;
+//剪裁框
+@property(nonatomic, strong) CXCropCase *cropCase;
+
+@property(nonatomic, strong) CXEditModel *editModel;
+//记录scroll初始化的scale
+@property(nonatomic, assign) CGFloat initialZoomScale;
 @end
 
 @implementation CXImageEditView
@@ -89,34 +101,28 @@
 
 - (void)setEditImage:(UIImage *)editImage {
     _editImage = editImage;
+    
+    self.scrollVi.minimumZoomScale = kMinZoomScale;
+    self.scrollVi.maximumZoomScale = kMaxZoomScale;
+    self.scrollVi.zoomScale = 1;
+    self.initialZoomScale = self.scrollVi.zoomScale;
+    
     //计算图片适配后的大小
     [self _caculateImageSize];
+    self.editIgvContainer.transform = CGAffineTransformIdentity;
+    self.editIgvContainer.frame = CGRectMake(0, 0, _editImageSize.width, _editImageSize.height);
+    self.editIgvContainer.layer.mask = nil;
+    self.editIgv.image = _editImage;
+    self.editIgv.frame = CGRectMake(0, 0, _editImageSize.width, _editImageSize.height);
     
     //设置contentSize
     self.scrollVi.contentSize = _editImageSize;
     //调整inset使图片居中显示
-    if (_isHorizontal) {
-        self.scrollVi.contentInset = UIEdgeInsetsMake((kScreenHeight - _editImageSize.height) / 2, 0, (kScreenHeight - _editImageSize.height) / 2, 0);
-    }else {
-        self.scrollVi.contentInset = UIEdgeInsetsMake(0, (kScreenWidth - _editImageSize.width) / 2  , 0, (kScreenWidth - _editImageSize.width) / 2);
-    }
-    
-    self.editIgvContainer.frame = CGRectMake(0, 0, _editImageSize.width, _editImageSize.height);
-    self.editIgv.image = _editImage;
-    self.editIgv.frame = CGRectMake(0, 0, _editImageSize.width, _editImageSize.height);
+    [self _adjustEditImageViewToCenter];
     
     [self.mosaicVi generateMosaicImage:_editImage];
-    [self.mosaicVi mas_makeConstraints:^(MASConstraintMaker *make) {
-        make.center.mas_equalTo(0);
-        make.width.offset(self.editImageSize.width);
-        make.height.offset(self.editImageSize.height);
-    }];
-    
-    [self.scrawlVi mas_makeConstraints:^(MASConstraintMaker *make) {
-        make.center.mas_equalTo(0);
-        make.width.offset(self.editImageSize.width);
-        make.height.offset(self.editImageSize.height);
-    }];
+    self.mosaicVi.frame = CGRectMake(0, 0, _editImageSize.width, _editImageSize.height);
+    self.scrawlVi.frame = CGRectMake(0, 0, _editImageSize.width, _editImageSize.height);
 }
 
 - (void)dealloc {
@@ -125,27 +131,28 @@
 
 #pragma mark ********* SetUp *********
 - (void)setUpView {
+    //初始化记录编辑操作的model
+    _editModel = [CXEditModel new];
     //工具栏未选中的图片
     _toolImages = @[@"pen", @"word", @"crop", @"mosaic"];
     //工具栏选中后的图片
     _toolSelectedImages = @[@"pen_selected", @"word_selected", @"crop_selected", @"mosaic_selected"];
     //颜色集合
     _colorsArr = @[CXUIColorFromRGB(0xffffff), CXUIColorFromRGB(0x000000), CXUIColorFromRGB(0xF5222D), CXUIColorFromRGB(0xFADB14), CXUIColorFromRGB(0x1890FF), CXUIColorFromRGB(0x52C41A), CXUIColorFromRGB(0x722ED1)];
-    _wordsArr = [NSMutableArray array];
     //默认涂鸦颜色为红色
     _selectColorIndex = 2;
     //默认没有选中工具栏里的任何一项
     _selectToolIndex = -1;
     //默认展示工具栏
     _isShowToolBar = YES;
+    //默认非编辑模式
+    _isEditMode = NO;
     self.backgroundColor = [UIColor blackColor];
     
     //初始化scrollView
+    self.scrollVi.bounds = CGRectMake(0, 0, kScreenHeight, kScreenHeight);
+    self.scrollVi.center = CGPointMake(kScreenWidth / 2, kScreenHeight / 2);
     [self addSubview:self.scrollVi];
-    [self.scrollVi mas_makeConstraints:^(MASConstraintMaker *make) {
-        make.left.top.bottom.right.mas_equalTo(0);
-    }];
-    
     
     self.editIgvContainer = [UIView new];
     [self.editIgvContainer addSubview:self.editIgv];
@@ -217,6 +224,11 @@
     
     [self.mosaicRecoveryBtn mas_makeConstraints:^(MASConstraintMaker *make) {
         make.left.right.bottom.top.mas_equalTo(0);
+    }];
+    
+    [self addSubview:self.cropFunctionBar];
+    [self.cropFunctionBar mas_makeConstraints:^(MASConstraintMaker *make) {
+        make.left.right.bottom.mas_equalTo(0);
     }];
 }
 
@@ -359,15 +371,10 @@
         if (indexPath.row == 2) {
             
             //隐藏工具栏
-//            [self clickEditImage];
-            
-            //截图
-            CXCropFunctionView *cropVi = [[CXCropFunctionView alloc]initWithFrame:CGRectMake(0, 0, kScreenWidth, kScreenHeight) image:[self _generateImage]];
-            __weak typeof(self) weakSelf = self;
-            cropVi.completeCrop = ^(UIImage * _Nonnull image) {
-                weakSelf.editIgv.image = image;
-            };
-            [self addSubview:cropVi];
+            [self _showOrHideToolBar:NO];
+            //进入编辑模式
+            [self.cropFunctionBar show];
+            [self _changeScrollIntoCropMode];
             
             self.scrawlVi.userInteractionEnabled = NO;
             self.colorsCollection.hidden = YES;
@@ -402,7 +409,17 @@
         
         if (indexPath.row == 4) {
             //完成
-            UIImage *result = [self _generateImage];
+            UIImage *result;
+            if (![self.scrawlVi canRecall] &&
+                _editModel.words.count == 0 &&
+                !_editModel.cropModel &&
+                ![self.mosaicVi canRecall]) {
+                //没有编辑过
+                result = self.editImage;
+            }else {
+                //编辑过
+                result = [self _generateImage];
+            }
             if (self.completeEdit) {
                 self.completeEdit(result);
             }
@@ -411,15 +428,6 @@
     }else if (collectionView == _colorsCollection) {
         //颜色选择器
         UIColor *selectColor;
-//        //白色，需要单独处理
-//        if (indexPath.row == 0) {
-//            selectColor = [UIColor whiteColor];
-//            self.scrawlVi.currentDrawColor = selectColor;
-//            [self.colorsCollection reloadData];
-//            _selectColorIndex = indexPath.row;
-//            return;
-//        }
-        
         //其他颜色
         if (indexPath.row < _colorsArr.count) {
             selectColor = _colorsArr[indexPath.row];
@@ -447,23 +455,56 @@
 
 //调整inset保证图片缩放后居中
 - (void)scrollViewDidZoom:(UIScrollView *)scrollView {
-    if (_isHorizontal) {
-        if (self.scrollVi.contentSize.height > kScreenHeight) {
-            //图片高大于屏幕高
-            self.scrollVi.contentInset = UIEdgeInsetsZero;
-        }else {
-            //图片高小于屏幕高
-            self.scrollVi.contentInset = UIEdgeInsetsMake((kScreenHeight - self.scrollVi.contentSize.height) / 2, 0, (kScreenHeight - self.scrollVi.contentSize.height) / 2, 0);
-        }
-    }else {
-        if (self.scrollVi.contentSize.width > kScreenWidth) {
-            //图片宽大于屏幕宽
-            self.scrollVi.contentInset = UIEdgeInsetsZero;
-        }else {
-            //图片宽小于屏幕宽
-            self.scrollVi.contentInset = UIEdgeInsetsMake(0, (kScreenWidth - self.scrollVi.contentSize.width) / 2  , 0, (kScreenWidth - self.scrollVi.contentSize.width) / 2);
-        }
+//    if (_isHorizontal) {
+//        if (self.scrollVi.contentSize.height > kScreenHeight) {
+//            //图片高大于屏幕高
+//            self.scrollVi.contentInset = UIEdgeInsetsZero;
+//        }else {
+//            //图片高小于屏幕高
+//            self.scrollVi.contentInset = UIEdgeInsetsMake((kScreenHeight - self.scrollVi.contentSize.height) / 2, (kScreenWidth - self.scrollVi.contentSize.width) / 2, (kScreenHeight - self.scrollVi.contentSize.height) / 2, (kScreenWidth - self.scrollVi.contentSize.width) / 2);
+//            NSLog(@"%@", NSStringFromUIEdgeInsets(self.scrollVi.contentInset));
+//        }
+//    }else {
+//        if (self.scrollVi.contentSize.width > kScreenWidth) {
+//            //图片宽大于屏幕宽
+//            self.scrollVi.contentInset = UIEdgeInsetsZero;
+//        }else {
+//            //图片宽小于屏幕宽
+//            self.scrollVi.contentInset = UIEdgeInsetsMake(0, (kScreenWidth - self.scrollVi.contentSize.width) / 2  , 0, (kScreenWidth - self.scrollVi.contentSize.width) / 2);
+//        }
+//    }
+    
+    if (_editModel.cropModel && !_isEditMode) {
+        [self _updateContentInsetAfterCrop];
     }
+}
+
+- (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView {
+    NSLog(@"scrollViewWillBeginDragging");
+    [self.cropCase beginImageresizer];
+}
+
+- (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView {
+    NSLog(@"scrollViewDidEndDecelerating");
+    [self.cropCase endedImageresizer];
+}
+
+//结束拖动后无加速度
+- (void)scrollViewWillEndDragging:(UIScrollView *)scrollView withVelocity:(CGPoint)velocity targetContentOffset:(inout CGPoint *)targetContentOffset {
+    if (CGPointEqualToPoint(velocity, CGPointZero)) {
+        NSLog(@"scrollViewWillEndDragging");
+        [self.cropCase endedImageresizer];
+    }
+}
+
+- (void)scrollViewWillBeginZooming:(UIScrollView *)scrollView withView:(nullable UIView *)view {
+    NSLog(@"scrollViewWillBeginZooming");
+    [self.cropCase beginImageresizer];
+}
+
+- (void)scrollViewDidEndZooming:(UIScrollView *)scrollView withView:(UIView *)view atScale:(CGFloat)scale {
+    NSLog(@"scrollViewDidEndZooming");
+    [self.cropCase endedImageresizer];
 }
 
 #pragma mark ********* CXScrawlViewDelegate *********
@@ -491,7 +532,7 @@
     __weak typeof(wordLab) weakWord = wordLab;
     __weak typeof(self) weakSelf = self;
     wordLab.closeBlock = ^{
-        [weakSelf.wordsArr removeObject:weakWord];
+        [weakSelf.editModel.words removeObject:weakWord];
         [weakWord removeFromSuperview];
     };
     wordLab.center = CGPointMake(self.editIgv.bounds.size.width / 2, self.editIgv.bounds.size.height / 2);
@@ -499,7 +540,7 @@
     wordLab.bounds = CGRectMake(0, 0, size.width, size.height);
     [wordLab showBorderAutoHide];
     [self.editIgv addSubview:wordLab];
-    [self.wordsArr addObject:wordLab];
+    [self.editModel.words addObject:wordLab];
     
     UIPanGestureRecognizer *wordPan = [[UIPanGestureRecognizer alloc]initWithTarget:self action:@selector(panWordVi:)];
     wordPan.maximumNumberOfTouches = 1;
@@ -534,6 +575,74 @@
     [self.toolsCollection reloadData];
 }
 
+#pragma mark ********* CropButtonClicked *********
+//进入编辑模式
+- (void)_changeScrollIntoCropMode {
+    
+    _isEditMode = YES;
+    [NSObject cancelPreviousPerformRequestsWithTarget:self];
+    if (_editModel.cropModel) {
+       //曾经编辑过
+        //缩小scroll的倍数
+        CGFloat cropScale = self.initialZoomScale * 0.7;
+        if (cropScale < self.scrollVi.minimumZoomScale) {
+            self.scrollVi.minimumZoomScale = cropScale;
+        }
+        
+        UIViewAnimationOptions options = UIViewAnimationOptionCurveLinear | UIViewAnimationOptionBeginFromCurrentState;
+        [UIView animateWithDuration:0.25 delay:0 options:options animations:^{
+            [self.scrollVi setZoomScale:cropScale animated:NO];
+            self.editIgvContainer.layer.mask = nil;
+            self.scrollVi.contentInset = self.editModel.cropModel.contentInset;
+            self.scrollVi.contentOffset = self.editModel.cropModel.contentOffset;
+//            [self _adjustEditImageViewToCenter];
+        } completion:^(BOOL finished) {
+            self.cropCase = [[CXCropCase alloc]initWithFrame:self.scrollVi.frame scrollVi:self.scrollVi imageView:self.editIgv cropModel:self.editModel.cropModel];
+            [self insertSubview:self.cropCase belowSubview:self.cropFunctionBar];
+        }];
+        
+    }else {
+       //未编辑过
+        //缩小scroll的倍数
+        CGFloat cropScale = self.initialZoomScale * 0.7;
+        if (cropScale < self.scrollVi.minimumZoomScale) {
+            self.scrollVi.minimumZoomScale = cropScale;
+        }
+        
+        UIViewAnimationOptions options = UIViewAnimationOptionCurveLinear | UIViewAnimationOptionBeginFromCurrentState;
+        [UIView animateWithDuration:0.25 delay:0 options:options animations:^{
+            [self.scrollVi setZoomScale:cropScale animated:NO];
+            [self _adjustEditImageViewToCenter];
+        } completion:^(BOOL finished) {
+            self.cropCase = [[CXCropCase alloc]initWithFrame:self.scrollVi.frame scrollVi:self.scrollVi imageView:self.editIgv];
+            [self insertSubview:self.cropCase belowSubview:self.cropFunctionBar];
+        }];
+    }
+}
+
+- (void)_afterCropAdjustScrollWithEditedImage:(UIImage *)editedImage {
+//    _editImage = editedImage;
+    CGFloat editScale = self.editModel.cropModel.zoomScale;
+    //放大动画
+    CGFloat scale = 1 / 0.7;
+    scale *= editScale;
+    self.scrollVi.minimumZoomScale = scale;
+    if (scale > self.scrollVi.maximumZoomScale) {
+        self.scrollVi.maximumZoomScale = scale;
+    }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        UIViewAnimationOptions options = UIViewAnimationOptionCurveEaseIn | UIViewAnimationOptionBeginFromCurrentState;
+        [UIView animateWithDuration:0.25 delay:0 options:options animations:^{
+            [self.scrollVi setZoomScale:scale animated:NO];
+            [self _updateContentInsetAfterCrop];
+        } completion:^(BOOL finished) {
+            self.initialZoomScale = self.scrollVi.zoomScale;
+        }];
+    });
+    
+}
+
+
 #pragma mark ********* CXMosaicViewDelegate *********
 - (void)mosaicBegan:(CXMosaicView *)mosaicView {
     //隐藏工具栏
@@ -566,12 +675,24 @@
 #pragma mark ********* EventResponse *********
 //点击图片
 - (void)clickEditImage {
+    if (_isEditMode) {
+        return;
+    }
     _isShowToolBar = !_isShowToolBar;
     [self _showOrHideToolBar:_isShowToolBar];
 }
 
 //点击返回
 - (void)clickBack {
+    //清除编辑操作
+    [self.scrawlVi clear];
+    for (CXWordLab *lab in _editModel.words) {
+        [lab removeFromSuperview];
+    }
+    _editModel.words = nil;
+    _editModel.cropModel = nil;
+    [self.mosaicVi clear];
+    
     if (self.customBackAction) {
         self.customBackAction();
         return;
@@ -585,6 +706,74 @@
         [self.mosaicVi recall];
         [self mosaicDidEnd:nil];
     }
+}
+
+#pragma mark ********* Router *********
+- (void)routerWithEventName:(NSString *)eventName DataInfo:(NSDictionary *)dataInfo {
+    //点击了剪裁功能的取消按钮
+    if ([eventName isEqualToString:kCXCropFunctionBar_CloseBtn_Clicked]) {
+        //退出编辑模式
+        _isEditMode = NO;
+        [self _showOrHideToolBar:YES];
+        [self.cropCase cancelDelayHandle];
+        [self.cropCase removeFromSuperview];
+        self.cropCase = nil;
+        
+        if (_editModel.cropModel) {
+            CAShapeLayer *maskLayer = [CAShapeLayer layer];
+            UIBezierPath *bezierPath = [UIBezierPath bezierPathWithRect:_editModel.cropModel.cropFrameOnImageView];
+            maskLayer.path = bezierPath.CGPath;
+            self.editIgvContainer.layer.mask = maskLayer;
+            [self _afterCropAdjustScrollWithEditedImage:_editModel.cropModel.cropImage];
+        }else {
+            self.scrollVi.minimumZoomScale = self.initialZoomScale;
+            UIViewAnimationOptions options = UIViewAnimationOptionCurveLinear | UIViewAnimationOptionBeginFromCurrentState;
+            [UIView animateWithDuration:0.25 delay:0 options:options animations:^{
+                [self.scrollVi setZoomScale:self.initialZoomScale animated:NO];
+                [self _adjustEditImageViewToCenter];
+            } completion:^(BOOL finished) {
+                
+            }];
+        }
+        return;
+    }
+    
+    //点击剪裁功能的还原按钮
+    if ([eventName isEqualToString:kCXCropFunctionBar_RecoveryBtn_Clicked]) {
+        [self.cropCase recovery];
+        return;
+    }
+    
+    //剪裁工具栏的还原按钮是否能点击
+    if ([eventName isEqualToString:kCXCropCase_IsCanRecovery]) {
+        BOOL isCanRecovery = [dataInfo[@"isCanRecovery"] boolValue];
+        [self.cropFunctionBar isCanRecovery:isCanRecovery];
+        return;
+    }
+    
+    //点击剪裁功能的旋转按钮
+    if ([eventName isEqualToString:kCXCropFunctionBar_RotationBtn_Clicked]) {
+        [self.cropCase rotation];
+        return;
+    }
+    
+    //点击了剪裁功能的完成按钮
+    if ([eventName isEqualToString:kCXCropFunctionBar_FinishBtn_Clicked]) {
+        __weak typeof(self) weakSelf = self;
+        [self.cropCase cropImageWithComplete:^(UIImage * _Nonnull image, CXCropModel *cropModel) {
+            weakSelf.editModel.cropModel = cropModel;
+            //退出编辑模式
+            weakSelf.isEditMode = NO;
+            [weakSelf _showOrHideToolBar:YES];
+            [self.cropCase cancelDelayHandle];
+            [weakSelf.cropCase removeFromSuperview];
+            weakSelf.cropCase = nil;
+            
+            [weakSelf _afterCropAdjustScrollWithEditedImage:image];
+        }];
+        return;
+    }
+    [super routerWithEventName:eventName DataInfo:dataInfo];
 }
 
 #pragma mark ********* WordGesture *********
@@ -732,24 +921,66 @@
 
 //生成合成图片
 - (UIImage *)_generateImage {
-    if (_wordsArr.count > 0) {
-        for (CXWordLab *wordLab in _wordsArr) {
+    if (_editModel.words.count > 0) {
+        for (CXWordLab *wordLab in _editModel.words) {
             [wordLab hideBorderRightNow];
         }
     }
-    CGSize contextSize = self.editIgv.bounds.size;
+    CGFloat imageWidth = self.editImage.size.width * self.editImage.scale;
+    CGFloat imageHeight = self.editImage.size.height * self.editImage.scale;
+    CGSize contextSize = CGSizeMake(imageWidth, imageHeight);
     UIGraphicsBeginImageContextWithOptions(contextSize, YES, 0);
     [self.editIgv drawViewHierarchyInRect:CGRectMake(0, 0, contextSize.width, contextSize.height) afterScreenUpdates:YES];
     UIImage *resultImg = UIGraphicsGetImageFromCurrentImageContext();
+    CGRect cropRect;
+    if (_editModel.cropModel) {
+        CGFloat x = resultImg.size.width * resultImg.scale * _editModel.cropModel.cropToImagePercentEdge.left;
+        CGFloat y = resultImg.size.height * resultImg.scale * _editModel.cropModel.cropToImagePercentEdge.top;
+        CGFloat width = resultImg.size.width * resultImg.scale * (1 - _editModel.cropModel.cropToImagePercentEdge.left - _editModel.cropModel.cropToImagePercentEdge.right);
+        CGFloat height = resultImg.size.height * resultImg.scale * (1 - _editModel.cropModel.cropToImagePercentEdge.top - _editModel.cropModel.cropToImagePercentEdge.bottom);
+        cropRect = CGRectMake(x, y, width, height);
+    }else {
+        cropRect = CGRectMake(0, 0, resultImg.size.width * resultImg.scale, resultImg.size.height * resultImg.scale);
+    }
+
+    CGImageRef imageRefRect = CGImageCreateWithImageInRect(resultImg.CGImage, cropRect);
+    UIImage *sendImage = [[UIImage alloc] initWithCGImage:imageRefRect];
+    if (_editModel.cropModel) {
+        sendImage = [self _getTargetDirectionImage:sendImage];
+    }
+    CGImageRelease(imageRefRect);
     UIGraphicsEndImageContext();
-    return resultImg;
+    return sendImage;
+}
+
+//根据方向获取正确的图片
+- (UIImage *)_getTargetDirectionImage:(UIImage *)image {
+    UIImageOrientation orientation;
+    switch (_editModel.cropModel.rotationDirection) {
+        case CXCropViewRotationDirectionLeft:
+            orientation = UIImageOrientationLeft;
+            break;
+            
+        case CXCropViewRotationDirectionDown:
+            orientation = UIImageOrientationDown;
+            break;
+            
+        case CXCropViewRotationDirectionRight:
+            orientation = UIImageOrientationRight;
+            break;
+            
+        default:
+            orientation = UIImageOrientationUp;
+            break;
+    }
+    return [UIImage imageWithCGImage:image.CGImage scale:image.scale orientation:orientation];
 }
 
 //生成全屏的合成图片
 - (UIImage *)_generateFullScreenImage {
-    if (_wordsArr.count > 0) {
-        for (CXWordLab *wordLab in _wordsArr) {
-            [wordLab hideBorder];
+    if (_editModel.words.count > 0) {
+        for (CXWordLab *wordLab in _editModel.words) {
+            [wordLab hideBorderRightNow];
         }
     }
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(kScreenWidth, kScreenHeight), YES, 0);
@@ -763,6 +994,7 @@
 
 //隐藏或显示工具栏
 - (void)_showOrHideToolBar:(BOOL)isShow {
+    _isShowToolBar = isShow;
     CGFloat alpha = isShow ? 1 : 0;
     UIViewAnimationOptions option = UIViewAnimationOptionCurveLinear | UIViewAnimationOptionBeginFromCurrentState;
     [UIView animateWithDuration:kAlphaAnimationDuration delay:0 options:option animations:^{
@@ -771,6 +1003,38 @@
     } completion:^(BOOL finished) {
         
     }];
+}
+
+//将图片调整至居中
+- (void)_adjustEditImageViewToCenter {
+    self.scrollVi.contentInset = UIEdgeInsetsMake((CGRectGetHeight(self.scrollVi.frame) - CGRectGetHeight(self.editIgvContainer.frame)) / 2,
+                                                  (CGRectGetWidth(self.scrollVi.frame) - CGRectGetWidth(self.editIgvContainer.frame)) / 2,
+                                                  (CGRectGetHeight(self.scrollVi.frame) - CGRectGetHeight(self.editIgvContainer.frame)) / 2,
+                                                  (CGRectGetWidth(self.scrollVi.frame) - CGRectGetWidth(self.editIgvContainer.frame)) / 2);
+}
+
+//根据剪裁框来更新scroll的内间距
+- (void)_updateContentInsetAfterCrop {
+    CGFloat showWidth = CGRectGetWidth(self.editIgvContainer.frame) * (1 - _editModel.cropModel.cropToImagePercentEdge.left - _editModel.cropModel.cropToImagePercentEdge.right);
+    CGFloat showHeight = CGRectGetHeight(self.editIgvContainer.frame) * (1 - _editModel.cropModel.cropToImagePercentEdge.top - _editModel.cropModel.cropToImagePercentEdge.bottom);
+    CGFloat left = (CGRectGetWidth(self.scrollVi.frame) - showWidth) / 2 - _editModel.cropModel.cropToImagePercentEdge.left * CGRectGetWidth(self.editIgvContainer.frame);
+    CGFloat right = (CGRectGetWidth(self.scrollVi.frame) - showWidth) / 2 - _editModel.cropModel.cropToImagePercentEdge.right * CGRectGetWidth(self.editIgvContainer.frame);
+    //超出屏幕部分可滑动
+    if (showWidth > kScreenWidth) {
+        CGFloat shouldMoveSpacing = (showWidth - kScreenWidth) * 0.5;
+        left += shouldMoveSpacing;
+        right+= shouldMoveSpacing;
+    }
+    CGFloat top = (CGRectGetHeight(self.scrollVi.frame) - showHeight) / 2 - _editModel.cropModel.cropToImagePercentEdge.top * CGRectGetHeight(self.editIgvContainer.frame);
+    CGFloat bottom = (CGRectGetHeight(self.scrollVi.frame) - showHeight) / 2 - _editModel.cropModel.cropToImagePercentEdge.bottom * CGRectGetHeight(self.editIgvContainer.frame);
+    //超出屏幕部分可滑动
+    if (showHeight > kScreenHeight) {
+        CGFloat shouldMoveSpacing = (showHeight - kScreenHeight) * 0.5;
+        top += shouldMoveSpacing;
+        bottom+= shouldMoveSpacing;
+    }
+    UIEdgeInsets contentInset = UIEdgeInsetsMake(top, left, bottom, right);
+    self.scrollVi.contentInset = contentInset;
 }
 
 #pragma mark ********* Getter *********
@@ -885,5 +1149,13 @@
         [_mosaicRecoveryBtn addTarget:self action:@selector(clickMosaicRecovery) forControlEvents:UIControlEventTouchUpInside];
     }
     return _mosaicRecoveryBtn;
+}
+
+- (CXCropFunctionBar *)cropFunctionBar {
+    if (!_cropFunctionBar) {
+        _cropFunctionBar = [[CXCropFunctionBar alloc]init];
+        _cropFunctionBar.alpha = 0;
+    }
+    return _cropFunctionBar;
 }
 @end

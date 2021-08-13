@@ -8,7 +8,9 @@
 #import "CXScrawlView.h"
 #import "CXScrawlInfo.h"
 @interface CXScrawlView()
+//涂鸦线段集合
 @property(nonatomic, strong) NSMutableArray *lineInfos;
+//滑动手势
 @property(nonatomic, strong) UIPanGestureRecognizer *pan;
 @end
 
@@ -38,6 +40,11 @@
         return;
     }
     [self.lineInfos removeLastObject];
+    [self setNeedsDisplay];
+}
+
+- (void)clear {
+    [self.lineInfos removeAllObjects];
     [self setNeedsDisplay];
 }
 

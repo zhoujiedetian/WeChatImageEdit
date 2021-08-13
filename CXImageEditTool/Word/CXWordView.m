@@ -190,17 +190,36 @@ replacementText:(NSString *)text {
     if (indexPath.row < _colorsArr.count) {
         //选择颜色
         UIColor *selectColor = _colorsArr[indexPath.row];
-        self.textVi.textColor = selectColor;
+        _selectColorIndex = indexPath.row;
+        if (_isShowTextViewBg) {
+            self.textVi.backgroundColor = selectColor;
+            //显示背景时，如果选择颜色为白色，则自动切换成黑色
+            if (_selectColorIndex == 0) {
+                self.textVi.textColor = [UIColor blackColor];
+            }else {
+                self.textVi.textColor = [UIColor whiteColor];
+            }
+        }else {
+            self.textVi.textColor = selectColor;
+        }
+        
     }else {
         _isShowTextViewBg = !_isShowTextViewBg;
         //选择背景色
         if (_isShowTextViewBg) {
-            self.textVi.backgroundColor = [UIColor whiteColor];
+            UIColor *selectedColor = _colorsArr[_selectColorIndex];
+            self.textVi.backgroundColor = selectedColor;
+            //显示背景时，如果选择颜色为白色，则自动切换成黑色
+            if (_selectColorIndex == 0) {
+                self.textVi.textColor = [UIColor blackColor];
+            }else {
+                self.textVi.textColor = [UIColor whiteColor];
+            }
         }else {
             self.textVi.backgroundColor = [UIColor clearColor];
+            self.textVi.textColor = _colorsArr[_selectColorIndex];
         }
     }
-    _selectColorIndex = indexPath.row;
     [self.colorsCollection reloadData];
 }
 
@@ -256,12 +275,12 @@ replacementText:(NSString *)text {
         return;
     }
     if (_isEdit && self.editComplete) {
-        self.editComplete(self.textVi.text, self.textVi.textColor, self.isShowTextViewBg);
+        self.editComplete(self.textVi.text, _colorsArr[_selectColorIndex], self.isShowTextViewBg);
         [self removeFromSuperview];
         return;
     }
     if (_delegate && [_delegate respondsToSelector:@selector(didAddWord:textColor:isShowBg:)]) {
-        [_delegate didAddWord:self.textVi.text textColor:self.textVi.textColor isShowBg:_isShowTextViewBg];
+        [_delegate didAddWord:self.textVi.text textColor:_colorsArr[_selectColorIndex] isShowBg:_isShowTextViewBg];
     }
     [self removeFromSuperview];
 }
@@ -270,13 +289,25 @@ replacementText:(NSString *)text {
 - (void)setText:(NSString *)text textColor:(UIColor *)textColor isShowBg:(BOOL)isShowBg {
     _isEdit = YES;
     self.textVi.text = text;
-    _selectColorIndex = [_colorsArr indexOfObject:textColor];
+    for (int i = 0; i < _colorsArr.count; i++) {
+        UIColor *color = _colorsArr[i];
+        if (CGColorEqualToColor(color.CGColor, textColor.CGColor)) {
+            _selectColorIndex = i;
+            break;
+        }
+    }
     self.textVi.textColor = textColor;
     _isShowTextViewBg = isShowBg;
     if (_isShowTextViewBg) {
-        self.textVi.backgroundColor = [UIColor whiteColor];
+        self.textVi.backgroundColor = textColor;
+        //显示背景时，如果选择颜色为白色，则自动切换成黑色
+        if (_selectColorIndex == 0) {
+            self.textVi.textColor = [UIColor blackColor];
+        }else {
+            self.textVi.textColor = [UIColor whiteColor];
+        }
     }else {
-        self.textVi.backgroundColor = [UIColor clearColor];
+        self.textVi.textColor = textColor;
     }
     [self.colorsCollection reloadData];
 }
@@ -365,6 +396,7 @@ replacementText:(NSString *)text {
         _textVi.textContainer.lineFragmentPadding = 0;
         _textVi.clipsToBounds = YES;
         _textVi.layer.cornerRadius = 8;
+        _textVi.tintColor = kThemeColor;
     }
     return _textVi;
 }

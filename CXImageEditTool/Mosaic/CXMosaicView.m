@@ -110,6 +110,15 @@
     }
 }
 
+- (void)clear {
+    [_lineInfos removeAllObjects];
+    [self _drawMaskLayer];
+    self.path = nil;
+    if (_lineInfos.count == 0) {
+        self.maskLayer.path = NULL;
+    }
+}
+
 #pragma mark ********* PrivateMethod *********
 - (void)_drawMaskLayer {
     for (int i = 0; i < _lineInfos.count; i++) {

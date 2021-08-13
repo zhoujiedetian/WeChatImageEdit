@@ -7,6 +7,7 @@
 
 #import "CXWordLab.h"
 #import "Masonry.h"
+#import "CXImageEditConfig.h"
 
 #define kEdgeSpace 5
 #define kWordFont 32
@@ -28,7 +29,7 @@
 }
 
 - (void)setUpView {
-    self.layer.borderColor = [UIColor whiteColor].CGColor;
+    self.layer.borderColor = CXUIColorFromRGBA(0xffffff, 0.2).CGColor;
     self.userInteractionEnabled = YES;
     [self addSubview:self.backgroundVi];
     [self addSubview:self.contentLab];
@@ -48,7 +49,7 @@
     
     [self addSubview:self.closeBtn];
     [self.closeBtn mas_makeConstraints:^(MASConstraintMaker *make) {
-        make.centerX.equalTo(self.mas_right);
+        make.centerX.equalTo(self.mas_left);
         make.centerY.equalTo(self.mas_top);
     }];
 }
@@ -115,7 +116,13 @@
 - (void)setIsShowBackgroundVi:(BOOL)isShowBackgroundVi {
     _isShowBackgroundVi = isShowBackgroundVi;
     if (_isShowBackgroundVi) {
-        self.backgroundVi.backgroundColor = [UIColor whiteColor];
+        self.backgroundVi.backgroundColor = _textColor;
+        //如果背景色为白色,将显示的字体颜色改为黑色
+        if (CGColorEqualToColor(_textColor.CGColor, CXUIColorFromRGB(0xffffff).CGColor)) {
+            self.contentLab.textColor = [UIColor blackColor];
+        }else {
+            self.contentLab.textColor = [UIColor whiteColor];
+        }
     }else {
         self.backgroundVi.backgroundColor = [UIColor clearColor];
     }

@@ -7,8 +7,8 @@
 
 #import "CXCropCase.h"
 #import "Masonry.h"
-#import "CXCropView.h"
 #import "CXImageEditConfig.h"
+#import "CXEditModel.h"
 
 //剪裁框四个角大小
 #define kCornerWidth 32
@@ -74,6 +74,8 @@ typedef NS_ENUM(NSInteger, CXCropCornerType) {
 @property(nonatomic, assign) CGFloat initialImageWidth;
 //图片初始高度
 @property(nonatomic, assign) CGFloat initialImageHeight;
+//scroll初始倍率
+@property(nonatomic, assign) CGFloat initialScrollZoomScale;
 //能否还原
 @property (nonatomic, assign) BOOL isCanRecovery;
 //是否正在拖动剪裁框
@@ -88,11 +90,24 @@ typedef NS_ENUM(NSInteger, CXCropCornerType) {
         self.scroll = scroll;
         self.imageVi = imageView;
         [self setUpView];
+        [self _layoutInitialCropCaseAndScrollByInitialZoomScale];
+    }
+    return self;
+}
+
+- (instancetype)initWithFrame:(CGRect)frame scrollVi:(UIScrollView *)scroll imageView:(UIImageView *)imageView cropModel:(CXCropModel *)cropModel {
+    self = [super initWithFrame:frame];
+    if (self) {
+        self.scroll = scroll;
+        self.imageVi = imageView;
+        [self setUpView];
+        [self _layoutInitialCropCaseAndScrollByCropModel:cropModel];
     }
     return self;
 }
 
 - (void)setUpView {
+    self.initialScrollZoomScale = 0.7;
     self.backgroundColor = [UIColor clearColor];
     
     self.maskLayer = [CAShapeLayer layer];
@@ -111,19 +126,23 @@ typedef NS_ENUM(NSInteger, CXCropCornerType) {
     [self addSubview:self.firstVerticalLine];
     [self addSubview:self.secondVerticalLine];
     [self addSubview:self.rightLine];
-    
+}
+
+- (void)_layoutInitialCropCaseAndScrollByInitialZoomScale {
     //计算最大剪裁区域
     [self _caculateMaxCropRect];
     
     //调整图片frame
+    UIView *imageContainer = self.imageVi.superview;
     CGSize imageSize = [self _caculateAdaptationImageSizeWithImageSize:CGSizeMake(self.imageVi.image.size.width, self.imageVi.image.size.height)];
-    self.imageVi.frame = CGRectMake(0, 0, imageSize.width, imageSize.height);
-    self.imageOriginFrame = self.imageVi.frame;
+    imageContainer.frame = CGRectMake(0, 0, imageSize.width, imageSize.height);
+    self.imageVi.frame = CGRectMake(0, 0, imageSize.width / self.scroll.zoomScale, imageSize.height / self.scroll.zoomScale);
+    self.imageOriginFrame = imageContainer.frame;
     
     //初始化剪裁框四个角
     [self _caculateInitialCropCaseFrame];
     [self _updateCropCaseFrame:self.originCropFrame];
-    
+    //更新遮罩
     [self _updateImageViewMask];
     
     //更新scroll的内间距和偏移量
@@ -131,6 +150,52 @@ typedef NS_ENUM(NSInteger, CXCropCornerType) {
     self.scroll.contentInset = initialContentInset;
     self.scroll.contentOffset = CGPointMake(-initialContentInset.left, -initialContentInset.top);
     self.scroll.contentSize = imageSize;
+}
+
+- (void)_layoutInitialCropCaseAndScrollByCropModel:(CXCropModel *)cropModel {
+    
+    //计算最大剪裁区域
+    [self _caculateMaxCropRect];
+    
+    //图片的初始大小
+    self.imageOriginFrame = cropModel.imageViewOriginFrame;
+    
+    //更新剪裁框位置
+    self.initialImageWidth = cropModel.cropCaseInitialFrame.size.width;
+    self.initialImageHeight = cropModel.cropCaseInitialFrame.size.height;
+    self.originCropFrame = cropModel.cropCaseInitialFrame;
+    self.currentCropFrame = cropModel.cropCaseFrame;
+    [self _updateCropCaseFrame:self.currentCropFrame];
+    //更新遮罩
+    [self _updateImageViewMask];
+    //更新scroll的内间距
+    [self _updateContentInsetWithCropFrame:self.currentCropFrame];
+    
+    self.scroll.maximumZoomScale = kMaxZoomScale;
+    CGFloat minZoomScale = 1;
+    CGFloat adjustWidth = cropModel.cropCaseFrame.size.width;
+    CGFloat adjustHeight = cropModel.cropCaseFrame.size.height;
+    if (cropModel.cropCaseFrame.size.width >= cropModel.cropCaseFrame.size.height) {
+        minZoomScale = adjustWidth / self.initialImageWidth;
+        CGFloat imageH = self.initialImageHeight * minZoomScale;
+        CGFloat trueImageH = adjustHeight;
+        if (imageH < trueImageH) {
+            minZoomScale *= (trueImageH / imageH);
+        }
+    } else {
+        minZoomScale = adjustHeight / self.initialImageHeight;
+        CGFloat imageW = self.initialImageWidth * minZoomScale;
+        CGFloat trueImageW = adjustWidth;
+        if (imageW < trueImageW) {
+            minZoomScale *= (trueImageW / imageW);
+        }
+    }
+    self.scroll.minimumZoomScale = minZoomScale * self.initialScrollZoomScale;
+}
+
+- (void)didMoveToSuperview {
+    //检测还原按钮能否点击
+    [self _checkShouldRecovery];
 }
 
 - (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
@@ -170,6 +235,7 @@ typedef NS_ENUM(NSInteger, CXCropCornerType) {
     //记录开始移动之前的高
     static CGFloat startHeight;
     if (pan.state == UIGestureRecognizerStateBegan) {
+        [NSObject cancelPreviousPerformRequestsWithTarget:self];
         //停止scroll的滑动动画
         if (self.scroll.isDecelerating) {
             [self.scroll setContentOffset:self.scroll.contentOffset animated:NO];
@@ -375,6 +441,7 @@ typedef NS_ENUM(NSInteger, CXCropCornerType) {
         
         //Zoom
         CGFloat zoomScale = MAX(widthScale, heightScale);
+        zoomScale *= self.initialScrollZoomScale;
         if (zoomScale > self.scroll.zoomScale) {
             self.scroll.zoomScale = zoomScale;
         }
@@ -454,14 +521,14 @@ typedef NS_ENUM(NSInteger, CXCropCornerType) {
 
 //还原
 - (void)recovery {
-    self.scroll.minimumZoomScale = kMinZoomScale;
+    self.scroll.minimumZoomScale = 0.7;
     self.scroll.maximumZoomScale = kMaxZoomScale;
     
     self.maskLayer.hidden = YES;
     [self _updateRotation:CXCropViewRotationDirectionUp];
     self.currentCropFrame = self.originCropFrame;
     [UIView animateWithDuration:0.2 animations:^{
-        self.scroll.zoomScale = 1;
+        self.scroll.zoomScale = 0.7;
         self.scroll.layer.transform = CATransform3DIdentity;
         self.layer.transform = CATransform3DIdentity;
         self.layer.opacity = 1;
@@ -472,62 +539,83 @@ typedef NS_ENUM(NSInteger, CXCropCornerType) {
 }
 
 //剪裁图片
-- (void)cropImageWithComplete:(void (^)(UIImage * image))complete; {
-    
+- (void)cropImageWithComplete:(void (^)(UIImage * image, CXCropModel *cropModel))complete; {
     UIImage *image = self.imageVi.image;
-    
+
     UIImageOrientation orientation;
     switch (self.rotationDirection) {
         case CXCropViewRotationDirectionUp:
             orientation = UIImageOrientationLeft;
             break;
-            
+
         case CXCropViewRotationDirectionDown:
             orientation = UIImageOrientationDown;
             break;
-            
+
         case CXCropViewRotationDirectionRight:
             orientation = UIImageOrientationRight;
             break;
-            
+
         default:
             orientation = UIImageOrientationUp;
             break;
     }
-    
+
     CGRect cropFrame = [self convertRect:self.currentCropFrame toView:self.imageVi];
-    
+
     // 宽高比不变，所以宽度高度的比例是一样
     CGFloat scale = image.size.width / self.imageVi.bounds.size.width;
-    CGFloat orgX = cropFrame.origin.x * scale * [UIScreen mainScreen].scale;
-    CGFloat orgY = cropFrame.origin.y * scale * [UIScreen mainScreen].scale;
-    CGFloat width = cropFrame.size.width * scale * [UIScreen mainScreen].scale;
-    CGFloat height = cropFrame.size.height * scale * [UIScreen mainScreen].scale;
-    
+    CGFloat orgX = cropFrame.origin.x * scale;
+    CGFloat orgY = cropFrame.origin.y * scale;
+    CGFloat width = cropFrame.size.width * scale;
+    CGFloat height = cropFrame.size.height * scale;
+
     CGRect cropRect = CGRectMake(orgX, orgY, width, height);
+    
+    double topPercentToImage = CGRectGetMinY(cropFrame) / CGRectGetHeight(self.imageVi.frame);
+    double leftPercentToImage = CGRectGetMinX(cropFrame) / CGRectGetWidth(self.imageVi.frame);
+    double bottomPercentToImage = 1 - CGRectGetMaxY(cropFrame) / CGRectGetHeight(self.imageVi.frame);
+    double rightPercentToImage = 1 - CGRectGetMaxX(cropFrame) / CGRectGetWidth(self.imageVi.frame);
     
     __weak typeof(self) weakSelf = self;
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) return;
-        
+
         CGImageRef imgRef = CGImageCreateWithImageInRect(image.CGImage, cropRect);
-        
+
         CGFloat deviceScale = [UIScreen mainScreen].scale;
         UIGraphicsBeginImageContextWithOptions(cropFrame.size, 0, deviceScale);
         CGContextRef context = UIGraphicsGetCurrentContext();
         CGContextTranslateCTM(context, 0, cropFrame.size.height);
         CGContextScaleCTM(context, 1, -1);
         CGContextDrawImage(context, CGRectMake(0, 0, cropFrame.size.width, cropFrame.size.height), imgRef);
-        
+
         UIImage *newImg = UIGraphicsGetImageFromCurrentImageContext();
         newImg = [strongSelf _getTargetDirectionImage:newImg];
-        
+
         CGImageRelease(imgRef);
         UIGraphicsEndImageContext();
-        
+
         dispatch_async(dispatch_get_main_queue(), ^{
-            complete(newImg);
+            
+            CAShapeLayer *maskLayer = [CAShapeLayer layer];
+            UIBezierPath *bezierPath = [UIBezierPath bezierPathWithRect:cropFrame];
+            maskLayer.path = bezierPath.CGPath;
+            self.imageVi.superview.layer.mask = maskLayer;
+            
+            CXCropModel *cropModel = [CXCropModel new];
+            cropModel.contentOffset = self.scroll.contentOffset;
+            cropModel.contentInset = self.scroll.contentInset;
+            cropModel.zoomScale = self.scroll.zoomScale;
+            cropModel.cropCaseFrame = self.currentCropFrame;
+            cropModel.cropFrameOnImageView = cropFrame;
+            cropModel.cropCaseInitialFrame = self.originCropFrame;
+            cropModel.cropImage = newImg;
+            cropModel.cropToImagePercentEdge = UIEdgeInsetsMake(topPercentToImage, leftPercentToImage, bottomPercentToImage, rightPercentToImage);
+            cropModel.imageViewOriginFrame = self.imageOriginFrame;
+            cropModel.rotationDirection = self.rotationDirection;
+            complete(newImg, cropModel);
         });
     });
 }
@@ -540,6 +628,10 @@ typedef NS_ENUM(NSInteger, CXCropCornerType) {
     UIEdgeInsets contentInset = [self _updateContentInsetWithCropFrame:[self _adjustCropCaseFrameToSuitable]];
     self.scroll.contentInset = contentInset;
     [self _updateImageViewMask];
+}
+
+- (void)cancelDelayHandle {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self];
 }
 
 #pragma mark ********* PrivateMethod *********
@@ -567,16 +659,20 @@ typedef NS_ENUM(NSInteger, CXCropCornerType) {
     }
     x = (self.bounds.size.width - width) * 0.5;
     y = (self.bounds.size.height - height) * 0.5;
+    y = (self.bounds.size.height - kStatusBarHeight - (CXBottomSafeHeight + 44) - height) * 0.5 + kStatusBarHeight;
     result = CGRectMake(x, y, width, height);
     self.maxCropRect = result;
 }
 
 //计算初始化剪裁框的位置
 - (void)_caculateInitialCropCaseFrame {
-    self.initialImageWidth = self.imageVi.bounds.size.width;
-    self.initialImageHeight = self.imageVi.bounds.size.height;
-    CGFloat x = CGRectGetMinX(self.maxCropRect) + (CGRectGetWidth(self.maxCropRect) - self.initialImageWidth) * 0.5;
-    CGFloat y = CGRectGetMinY(self.maxCropRect) + (CGRectGetHeight(self.maxCropRect) - self.initialImageHeight) * 0.5;
+    UIView *imageContainer = self.imageVi.superview;
+    self.initialImageWidth = imageContainer.frame.size.width;
+    self.initialImageHeight = imageContainer.frame.size.height;
+//    CGFloat x = CGRectGetMinX(self.maxCropRect) + (CGRectGetWidth(self.maxCropRect) - self.initialImageWidth) * 0.5;
+    CGFloat x = (self.bounds.size.width - self.initialImageWidth) * 0.5;
+//    CGFloat y = CGRectGetMinY(self.maxCropRect) + (CGRectGetHeight(self.maxCropRect) - self.initialImageHeight) * 0.5;
+    CGFloat y = (self.bounds.size.height - self.initialImageHeight) * 0.5;
     CGFloat width = self.initialImageWidth;
     CGFloat height = self.initialImageHeight;
     self.originCropFrame = CGRectMake(x, y, width, height);
@@ -642,8 +738,10 @@ typedef NS_ENUM(NSInteger, CXCropCornerType) {
                 adjustWidth = adjustHeight * cropCaseWHScale;
             }
         }
-        adjustX = self.maxCropRect.origin.x + (CGRectGetWidth(self.maxCropRect) - adjustWidth) * 0.5;
-        adjustY = self.maxCropRect.origin.y + (CGRectGetHeight(self.maxCropRect) - adjustHeight) * 0.5;
+//        adjustX = self.maxCropRect.origin.x + (CGRectGetWidth(self.maxCropRect) - adjustWidth) * 0.5;
+        adjustX = (self.bounds.size.width - adjustWidth) * 0.5;
+//        adjustY = self.maxCropRect.origin.y + (CGRectGetHeight(self.maxCropRect) - adjustHeight) * 0.5;
+        adjustY = (self.bounds.size.height - adjustHeight) * 0.5;
     }else {
 //        adjustWidth = CGRectGetWidth(self.currentCropFrame);
 //        adjustHeight = CGRectGetHeight(self.currentCropFrame);
@@ -710,7 +808,7 @@ typedef NS_ENUM(NSInteger, CXCropCornerType) {
                 minZoomScale *= (trueImageW / imageW);
             }
         }
-        self.scroll.minimumZoomScale = minZoomScale;
+        self.scroll.minimumZoomScale = minZoomScale * self.initialScrollZoomScale;
     };
     if (duration > 0) {
         [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionCurveLinear | UIViewAnimationOptionBeginFromCurrentState animations:^{
@@ -864,14 +962,26 @@ typedef NS_ENUM(NSInteger, CXCropCornerType) {
 
 //检测是否可以还原
 - (void)_checkShouldRecovery {
-    if (CGRectEqualToRect(self.imageVi.frame, self.imageOriginFrame) &&
-        _rotationDirection == CXCropViewRotationDirectionUp &&
-        self.scroll.zoomScale == 1 &&
-        CGRectEqualToRect(self.currentCropFrame, self.originCropFrame)) {
-        self.isCanRecovery = NO;
+    NSLog(@"%d", CGRectEqualToRect(self.imageVi.superview.frame, self.imageOriginFrame));
+    NSLog(@"%d", _rotationDirection == CXCropViewRotationDirectionUp);
+    NSLog(@"%d", self.scroll.zoomScale == self.initialScrollZoomScale);
+    NSLog(@"%d", CGRectEqualToRect(self.currentCropFrame, self.originCropFrame));
+//    BOOL isImageViewSizeSame = CGRectEqualToRect(self.imageVi.superview.frame, self.imageOriginFrame);
+    BOOL isImageViewSizeSame = (fabs(CGRectGetWidth(self.imageVi.superview.frame) - CGRectGetWidth(self.imageOriginFrame)) < 0.05 &&
+    fabs(CGRectGetHeight(self.imageVi.superview.frame) - CGRectGetHeight(self.imageOriginFrame)) < 0.05);
+    BOOL isDirectionUp = (_rotationDirection == CXCropViewRotationDirectionUp);
+    BOOL isZoomScaleOriginal = (self.scroll.zoomScale == self.initialScrollZoomScale);
+    BOOL isCropCaseOriginal = CGRectEqualToRect(self.currentCropFrame, self.originCropFrame);
+    if (isImageViewSizeSame && isDirectionUp && isZoomScaleOriginal && isCropCaseOriginal) {
+        [self routerWithEventName:kCXCropCase_IsCanRecovery DataInfo:@{@"isCanRecovery" : @(NO)}];
     }else {
-        self.isCanRecovery = YES;
+        [self routerWithEventName:kCXCropCase_IsCanRecovery DataInfo:@{@"isCanRecovery" : @(YES)}];
     }
+}
+
+- (void)dealloc
+{
+    NSLog(@"123");
 }
 
 #pragma mark ********* Getter *********

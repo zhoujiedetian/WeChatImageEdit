@@ -21,7 +21,6 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)hideBorder;
 //立即隐藏border
 - (void)hideBorderRightNow;
-
 @end
 
 NS_ASSUME_NONNULL_END

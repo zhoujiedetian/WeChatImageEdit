@@ -9,6 +9,7 @@
 #define CXImageEditConfig_h
 
 #import "Masonry.h"
+#import "UIResponder+Router.h"
 
 #pragma mark ********* UIColor *********
 #define CXUIColorFromRGBA(rgbValue, alphaValue) [UIColor \

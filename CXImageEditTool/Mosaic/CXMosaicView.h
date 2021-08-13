@@ -18,4 +18,5 @@
 - (void)generateMosaicImage:(UIImage *)image;
 - (BOOL)canRecall;
 - (void)recall;
+- (void)clear;
 @end
