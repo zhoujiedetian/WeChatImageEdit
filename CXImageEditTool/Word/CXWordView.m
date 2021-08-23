@@ -310,6 +310,8 @@ replacementText:(NSString *)text {
         self.textVi.textColor = textColor;
     }
     [self.colorsCollection reloadData];
+    
+    [self textViewDidChange:self.textVi];
 }
 
 #pragma mark ********* PrivateMethod *********

@@ -9,8 +9,8 @@
 #import "CXMosaicInfo.h"
 #import "UIImage+Mosaic.h"
 
-#define kPixOfMosaic 10
-#define kWidthOfMosaic 10
+#define kPixOfMosaic 30
+#define kWidthOfMosaic 15
 
 @interface CXMosaicView()
 @property(nonatomic, strong) NSMutableArray *lineInfos;
@@ -46,7 +46,7 @@
     [self addGestureRecognizer:_pan];
     
     self.path = CGPathCreateMutable();
-    
+
 }
 
 - (void)layoutSubviews {

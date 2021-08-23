@@ -79,6 +79,10 @@
 @property(nonatomic, strong) CXEditModel *editModel;
 //记录scroll初始化的scale
 @property(nonatomic, assign) CGFloat initialZoomScale;
+//记录开始剪裁之前的旋转方向
+@property(nonatomic, assign) CXCropViewRotationDirection directionBeforeCrop;
+
+@property(nonatomic, assign) CATransform3D scrollInitialTransform;
 @end
 
 @implementation CXImageEditView
@@ -100,7 +104,7 @@
 }
 
 - (void)setEditImage:(UIImage *)editImage {
-    _editImage = editImage;
+    _editImage = [self _compressHDImage:editImage];
     
     self.scrollVi.minimumZoomScale = kMinZoomScale;
     self.scrollVi.maximumZoomScale = kMaxZoomScale;
@@ -153,6 +157,7 @@
     self.scrollVi.bounds = CGRectMake(0, 0, kScreenHeight, kScreenHeight);
     self.scrollVi.center = CGPointMake(kScreenWidth / 2, kScreenHeight / 2);
     [self addSubview:self.scrollVi];
+    _scrollInitialTransform = self.scrollVi.layer.transform;
     
     self.editIgvContainer = [UIView new];
     [self.editIgvContainer addSubview:self.editIgv];
@@ -455,27 +460,34 @@
 
 //调整inset保证图片缩放后居中
 - (void)scrollViewDidZoom:(UIScrollView *)scrollView {
-//    if (_isHorizontal) {
-//        if (self.scrollVi.contentSize.height > kScreenHeight) {
-//            //图片高大于屏幕高
-//            self.scrollVi.contentInset = UIEdgeInsetsZero;
-//        }else {
-//            //图片高小于屏幕高
-//            self.scrollVi.contentInset = UIEdgeInsetsMake((kScreenHeight - self.scrollVi.contentSize.height) / 2, (kScreenWidth - self.scrollVi.contentSize.width) / 2, (kScreenHeight - self.scrollVi.contentSize.height) / 2, (kScreenWidth - self.scrollVi.contentSize.width) / 2);
-//            NSLog(@"%@", NSStringFromUIEdgeInsets(self.scrollVi.contentInset));
-//        }
-//    }else {
-//        if (self.scrollVi.contentSize.width > kScreenWidth) {
-//            //图片宽大于屏幕宽
-//            self.scrollVi.contentInset = UIEdgeInsetsZero;
-//        }else {
-//            //图片宽小于屏幕宽
-//            self.scrollVi.contentInset = UIEdgeInsetsMake(0, (kScreenWidth - self.scrollVi.contentSize.width) / 2  , 0, (kScreenWidth - self.scrollVi.contentSize.width) / 2);
-//        }
-//    }
-    
+
     if (_editModel.cropModel && !_isEditMode) {
         [self _updateContentInsetAfterCrop];
+        return;
+    }
+    
+    //剪裁模式不在此方法调整其contentInset
+    if (_isEditMode) {
+        return;
+    }
+    
+    //此方法只在编辑初始页调整contentInset使其居中
+    if (_isHorizontal) {
+        if (self.scrollVi.contentSize.height > kScreenHeight) {
+            //图片高大于屏幕高
+            self.scrollVi.contentInset = UIEdgeInsetsZero;
+        }else {
+            //图片高小于屏幕高
+            self.scrollVi.contentInset = UIEdgeInsetsMake((self.scrollVi.frame.size.height - self.scrollVi.contentSize.height) / 2, (self.scrollVi.frame.size.width - kScreenWidth) / 2, (self.scrollVi.frame.size.height - self.scrollVi.contentSize.height) / 2, (self.scrollVi.frame.size.width - kScreenWidth) / 2);
+        }
+    }else {
+        if (self.scrollVi.contentSize.width > kScreenWidth) {
+            //图片宽大于屏幕宽
+            self.scrollVi.contentInset = UIEdgeInsetsZero;
+        }else {
+            //图片宽小于屏幕宽
+            self.scrollVi.contentInset = UIEdgeInsetsMake((self.scrollVi.frame.size.height - kScreenHeight) / 2, (self.scrollVi.frame.size.width - self.scrollVi.contentSize.width) / 2  , (self.scrollVi.frame.size.height - kScreenHeight) / 2, (self.scrollVi.frame.size.width - self.scrollVi.contentSize.width) / 2);
+        }
     }
 }
 
@@ -535,11 +547,20 @@
         [weakSelf.editModel.words removeObject:weakWord];
         [weakWord removeFromSuperview];
     };
-    wordLab.center = CGPointMake(self.editIgv.bounds.size.width / 2, self.editIgv.bounds.size.height / 2);
+    if (_editModel.cropModel) {
+        CGFloat centerXPercent = 0.5 * (1 - (_editModel.cropModel.cropToImagePercentEdge.left + _editModel.cropModel.cropToImagePercentEdge.right)) + _editModel.cropModel.cropToImagePercentEdge.left;
+        CGFloat centerYPercent = 0.5 * (1 - (_editModel.cropModel.cropToImagePercentEdge.top + _editModel.cropModel.cropToImagePercentEdge.bottom)) + _editModel.cropModel.cropToImagePercentEdge.top;
+        wordLab.center = CGPointMake(self.editIgv.bounds.size.width * centerXPercent, self.editIgv.bounds.size.height * centerYPercent);
+    }else {
+        wordLab.center = CGPointMake(self.editIgv.bounds.size.width / 2, self.editIgv.bounds.size.height / 2);
+    }
     CGSize size = [wordLab sizeThatFits:CGSizeMake(kScreenWidth, kScreenHeight)];
     wordLab.bounds = CGRectMake(0, 0, size.width, size.height);
     [wordLab showBorderAutoHide];
-    [self.editIgv addSubview:wordLab];
+    [self _fixWordsOrientationAndSize:wordLab];
+//    [self.editIgv addSubview:wordLab];
+    [self.editIgvContainer addSubview:wordLab];
+    
     [self.editModel.words addObject:wordLab];
     
     UIPanGestureRecognizer *wordPan = [[UIPanGestureRecognizer alloc]initWithTarget:self action:@selector(panWordVi:)];
@@ -564,6 +585,13 @@
     
     [tapWord requireGestureRecognizerToFail:doubleTapWord];
     
+    self.scrollVi.panGestureRecognizer.maximumNumberOfTouches = 1;
+    [self.scrollVi.panGestureRecognizer requireGestureRecognizerToFail:wordPan];
+    [self.scrollVi.panGestureRecognizer requireGestureRecognizerToFail:wordPinch];
+    [self.scrollVi.panGestureRecognizer requireGestureRecognizerToFail:wordRotation];
+    [self.scrollVi.pinchGestureRecognizer requireGestureRecognizerToFail:wordPinch];
+    [self.scrollVi.pinchGestureRecognizer requireGestureRecognizerToFail:wordRotation];
+    
     //清除选中的文字选项
     _selectToolIndex = -1;
     [self.toolsCollection reloadData];
@@ -580,8 +608,12 @@
 - (void)_changeScrollIntoCropMode {
     
     _isEditMode = YES;
+    for (CXWordLab *wordLab in _editModel.words) {
+        [wordLab hideBorderRightNow];
+    }
     [NSObject cancelPreviousPerformRequestsWithTarget:self];
     if (_editModel.cropModel) {
+        _directionBeforeCrop = _editModel.cropModel.rotationDirection;
        //曾经编辑过
         //缩小scroll的倍数
         CGFloat cropScale = self.initialZoomScale * 0.7;
@@ -602,6 +634,7 @@
         }];
         
     }else {
+        _directionBeforeCrop = CXCropViewRotationDirectionUp;
        //未编辑过
         //缩小scroll的倍数
         CGFloat cropScale = self.initialZoomScale * 0.7;
@@ -669,7 +702,7 @@
 //    if ([otherGestureRecognizer.view isKindOfClass:[UIScrollView class]]) {
 //        return NO;
 //    }
-    return NO;
+    return YES;
 }
 
 #pragma mark ********* EventResponse *********
@@ -692,6 +725,7 @@
     _editModel.words = nil;
     _editModel.cropModel = nil;
     [self.mosaicVi clear];
+    self.scrollVi.layer.transform = CATransform3DIdentity;
     
     if (self.customBackAction) {
         self.customBackAction();
@@ -725,10 +759,17 @@
             maskLayer.path = bezierPath.CGPath;
             self.editIgvContainer.layer.mask = maskLayer;
             [self _afterCropAdjustScrollWithEditedImage:_editModel.cropModel.cropImage];
+            UIViewAnimationOptions options = UIViewAnimationOptionCurveLinear | UIViewAnimationOptionBeginFromCurrentState;
+            [UIView animateWithDuration:0.25 delay:0 options:options animations:^{
+                [self _rotationScrollWithDiretion:self.directionBeforeCrop];
+            } completion:^(BOOL finished) {
+                
+            }];
         }else {
             self.scrollVi.minimumZoomScale = self.initialZoomScale;
             UIViewAnimationOptions options = UIViewAnimationOptionCurveLinear | UIViewAnimationOptionBeginFromCurrentState;
             [UIView animateWithDuration:0.25 delay:0 options:options animations:^{
+                [self _rotationScrollWithDiretion:self.directionBeforeCrop];
                 [self.scrollVi setZoomScale:self.initialZoomScale animated:NO];
                 [self _adjustEditImageViewToCenter];
             } completion:^(BOOL finished) {
@@ -777,8 +818,32 @@
 }
 
 #pragma mark ********* WordGesture *********
+//计算当前展示图片部分的中心
+- (CGPoint)_caculateEditIgvCenter {
+    CGPoint center = CGPointZero;
+    if (_editModel.cropModel) {
+        CGFloat x = self.editIgv.frame.origin.x;
+        CGFloat y = self.editIgv.frame.origin.y;
+        CGFloat width = self.editIgv.frame.size.width;
+        CGFloat height = self.editIgv.frame.size.height;
+        CGFloat horizontalShowRatio = 1 - _editModel.cropModel.cropToImagePercentEdge.left - _editModel.cropModel.cropToImagePercentEdge.right;
+        CGFloat verticalShowRatio = 1 - _editModel.cropModel.cropToImagePercentEdge.top - _editModel.cropModel.cropToImagePercentEdge.bottom;
+        CGFloat showWidth = width * horizontalShowRatio;
+        CGFloat showHeight = height * verticalShowRatio;
+        CGFloat showX = width * _editModel.cropModel.cropToImagePercentEdge.left + x;
+        CGFloat showY = height * _editModel.cropModel.cropToImagePercentEdge.top + y;
+        CGRect showRect = CGRectMake(showX, showY, showWidth, showHeight);
+        center = CGPointMake(CGRectGetMidX(showRect), CGRectGetMidY(showRect));
+    }else {
+        center = self.editIgv.center;
+    }
+    return center;
+}
 /* 为了实现文本框超出图片被截取的功能，在滑动的时候在文本框添加到_editIgvContainer,在滑动完成的时候再添加回_editIgv */
 - (void)panWordVi:(UIPanGestureRecognizer *)pan {
+    if (_isEditMode) {
+            return;
+        }
     CXWordLab *word = (CXWordLab *)pan.view;
 
     static CGPoint originCenter;
@@ -798,11 +863,25 @@
         word.center = CGPointMake(originCenter.x + (endPanLocation.x - startPanLocation.x), originCenter.y + (endPanLocation.y - startPanLocation.y));
     }else if (pan.state == UIGestureRecognizerStateEnded ||
               pan.state == UIGestureRecognizerStateCancelled) {
+        CGFloat horizontalShowRatio = 1;
+        CGFloat verticalShowRatio = 1;
+        if (_editModel.cropModel) {
+            horizontalShowRatio = 1 - _editModel.cropModel.cropToImagePercentEdge.left - _editModel.cropModel.cropToImagePercentEdge.right;
+            verticalShowRatio = 1 - _editModel.cropModel.cropToImagePercentEdge.top - _editModel.cropModel.cropToImagePercentEdge.bottom;
+        }
+        CGPoint imageCurrentCenter = [self _caculateEditIgvCenter];
+        if (fabs(word.center.y - imageCurrentCenter.y) > self.editIgv.frame.size.height * verticalShowRatio / 2 ||
+            fabs(word.center.x - imageCurrentCenter.x) > self.editIgv.frame.size.width * horizontalShowRatio / 2) {
+            //X轴或Y轴超过图片
+            word.center = originCenter;
+        }
+        
         CGRect tempRect = [self.editIgvContainer convertRect:word.frame toView:self.editIgv];
         word.center = CGPointMake(CGRectGetMidX(tempRect), CGRectGetMidY(tempRect));
         [self.editIgv addSubview:word];
         [word hideBorder];
-        if (CGRectIsNull(CGRectIntersection(tempRect, self.editIgv.frame))) {
+        if (CGRectIsNull(CGRectIntersection(word.frame, self.editIgv.frame))) {
+            [self.editModel.words removeObject:word];
             [word removeFromSuperview];
         }
     }else {
@@ -812,19 +891,22 @@
         [word hideBorder];
     }
 }
-
 - (void)pinchWordVi:(UIPinchGestureRecognizer *)pinch {
+    if (_isEditMode) {
+        return;
+    }
     CXWordLab *word = (CXWordLab *)pinch.view;
-    static CGAffineTransform beginTransform;
     if (pinch.state == UIGestureRecognizerStateBegan) {
         CGRect rectOnIgv = word.frame;
         CGRect rectOnContainer = [_editIgv convertRect:rectOnIgv toView:self.editIgvContainer];
         word.center = CGPointMake(CGRectGetMidX(rectOnContainer), CGRectGetMidY(rectOnContainer));
-        [self.editIgvContainer addSubview:word];
+        if (word.superview != self.editIgvContainer) {
+            [self.editIgvContainer addSubview:word];
+        }
         [word showBorderForever];
-        beginTransform = word.transform;
     }else if (pinch.state == UIGestureRecognizerStateChanged) {
-        word.transform = CGAffineTransformScale(beginTransform, pinch.scale, pinch.scale);
+        word.transform = CGAffineTransformScale(word.transform, pinch.scale, pinch.scale);
+        pinch.scale = 1;
     }else if (pinch.state == UIGestureRecognizerStateEnded) {
         CGRect tempRect = [self.editIgvContainer convertRect:word.frame toView:self.editIgv];
         word.center = CGPointMake(CGRectGetMidX(tempRect), CGRectGetMidY(tempRect));
@@ -839,17 +921,21 @@
 }
 
 - (void)rotationWordVi:(UIRotationGestureRecognizer *)rotation {
+    if (_isEditMode) {
+        return;
+    }
     CXWordLab *word = (CXWordLab *)rotation.view;
-    static CGAffineTransform beginTransform;
     if (rotation.state == UIGestureRecognizerStateBegan) {
         CGRect rectOnIgv = word.frame;
         CGRect rectOnContainer = [_editIgv convertRect:rectOnIgv toView:self.editIgvContainer];
         word.center = CGPointMake(CGRectGetMidX(rectOnContainer), CGRectGetMidY(rectOnContainer));
-        [self.editIgvContainer addSubview:word];
+        if (word.superview != self.editIgvContainer) {
+            [self.editIgvContainer addSubview:word];
+        }
         [word showBorderForever];
-        beginTransform = word.transform;
     }else if (rotation.state == UIGestureRecognizerStateChanged) {
-        word.transform = CGAffineTransformRotate(beginTransform, rotation.rotation);
+        word.transform = CGAffineTransformRotate(word.transform, rotation.rotation);
+        rotation.rotation = 0;
     }else if (rotation.state == UIGestureRecognizerStateEnded) {
         CGRect tempRect = [self.editIgvContainer convertRect:word.frame toView:self.editIgv];
         word.center = CGPointMake(CGRectGetMidX(tempRect), CGRectGetMidY(tempRect));
@@ -864,11 +950,17 @@
 }
 
 - (void)tapWordVi:(UITapGestureRecognizer *)tap {
+    if (_isEditMode) {
+        return;
+    }
     CXWordLab *word = (CXWordLab *)tap.view;
     [word showBorderAutoHide];
 }
 
 - (void)doubleTapWordVi:(UITapGestureRecognizer *)doubleTap {
+    if (_isEditMode) {
+        return;
+    }
     CXWordLab *word = (CXWordLab *)doubleTap.view;
     NSString *tempStr = word.text;
     word.hidden = YES;
@@ -903,6 +995,19 @@
     [wordVi.layer addAnimation:basic forKey:nil];
 }
 
+#pragma mark ********* PublicMethod *********
+- (void)clearAllEditHandle {
+    //清除编辑操作
+    [self.scrawlVi clear];
+    for (CXWordLab *lab in _editModel.words) {
+        [lab removeFromSuperview];
+    }
+    [_editModel.words removeAllObjects];
+    _editModel.cropModel = nil;
+    [self.mosaicVi clear];
+    self.scrollVi.layer.transform = CATransform3DIdentity;
+}
+
 #pragma mark ********* PrivateMethod *********
 //计算图片适配后大小
 - (void)_caculateImageSize {
@@ -917,20 +1022,22 @@
     }else {
         _editImageSize = CGSizeMake(imageWidth * (kScreenHeight / imageHeight), kScreenHeight);
     }
+
 }
 
 //生成合成图片
 - (UIImage *)_generateImage {
     if (_editModel.words.count > 0) {
-        for (CXWordLab *wordLab in _editModel.words) {
-            [wordLab hideBorderRightNow];
+            for (CXWordLab *wordLab in _editModel.words) {
+                [wordLab hideBorderRightNow];
+            }
         }
-    }
-    CGFloat imageWidth = self.editImage.size.width * self.editImage.scale;
-    CGFloat imageHeight = self.editImage.size.height * self.editImage.scale;
+    CGFloat scale = _editImage.size.width / _editIgv.frame.size.width;
+    NSInteger imageWidth = floor(self.editIgv.frame.size.width);
+    NSInteger imageHeight = floor(self.editIgv.frame.size.height);
     CGSize contextSize = CGSizeMake(imageWidth, imageHeight);
-    UIGraphicsBeginImageContextWithOptions(contextSize, YES, 0);
-    [self.editIgv drawViewHierarchyInRect:CGRectMake(0, 0, contextSize.width, contextSize.height) afterScreenUpdates:YES];
+    UIGraphicsBeginImageContextWithOptions(contextSize, NO, scale);
+    [self.editIgvContainer.layer renderInContext:UIGraphicsGetCurrentContext()];
     UIImage *resultImg = UIGraphicsGetImageFromCurrentImageContext();
     CGRect cropRect;
     if (_editModel.cropModel) {
@@ -951,6 +1058,7 @@
     CGImageRelease(imageRefRect);
     UIGraphicsEndImageContext();
     return sendImage;
+
 }
 
 //根据方向获取正确的图片
@@ -979,14 +1087,15 @@
 //生成全屏的合成图片
 - (UIImage *)_generateFullScreenImage {
     if (_editModel.words.count > 0) {
-        for (CXWordLab *wordLab in _editModel.words) {
-            [wordLab hideBorderRightNow];
+            for (CXWordLab *wordLab in _editModel.words) {
+                [wordLab hideBorderRightNow];
+            }
         }
-    }
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(kScreenWidth, kScreenHeight), YES, 0);
     CGSize imageSize = self.editIgv.bounds.size;
+    CGFloat x = (kScreenWidth - imageSize.width) / 2;
     CGFloat y = (kScreenHeight - imageSize.height) / 2;
-    [self.editIgv drawViewHierarchyInRect:CGRectMake(0, y, imageSize.width, imageSize.height) afterScreenUpdates:YES];
+    [self.editIgv drawViewHierarchyInRect:CGRectMake(x, y, imageSize.width, imageSize.height) afterScreenUpdates:YES];
     UIImage *resultImg = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
     return resultImg;
@@ -1035,6 +1144,102 @@
     }
     UIEdgeInsets contentInset = UIEdgeInsetsMake(top, left, bottom, right);
     self.scrollVi.contentInset = contentInset;
+}
+
+//压缩高清图片
+- (UIImage *)_compressHDImage:(UIImage *)image {
+    if (image.size.width < 5000 && image.size.height < 5000) {
+        return image;
+    }
+    CGFloat imageRatio = image.size.width / image.size.height;
+    CGFloat width = 1024;
+    CGFloat height = 1024 / imageRatio;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(width, height), YES, 0);
+    [image drawInRect:CGRectMake(0, 0, width, height)];
+    UIImage *newImage = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return newImage;
+}
+
+- (void)_rotationScrollWithDiretion:(CXCropViewRotationDirection)direction {
+    CGFloat scale = 0;
+    if (direction == CXCropViewRotationDirectionLeft ||
+        direction == CXCropViewRotationDirectionRight) {
+        scale = kScreenWidth / self.scrollVi.bounds.size.height;
+    }else {
+        scale = self.scrollVi.bounds.size.height / kScreenWidth;
+    }
+    CGFloat angle = -M_PI / 2;
+    
+    switch (direction) {
+        case CXCropViewRotationDirectionUp:
+            angle = 0;
+            break;
+        case CXCropViewRotationDirectionLeft:
+            angle = -M_PI / 2;
+            break;
+        case CXCropViewRotationDirectionDown:
+            angle = -M_PI;
+            break;
+        case CXCropViewRotationDirectionRight:
+            angle = -3 * M_PI / 2;
+            break;
+            
+        default:
+            break;
+    }
+    
+    UIViewAnimationOptions options = UIViewAnimationOptionCurveLinear | UIViewAnimationOptionBeginFromCurrentState;
+    [UIView animateWithDuration:0.25 delay:0 options:options animations:^{
+        self.scrollVi.layer.transform = CATransform3DRotate(self.scrollInitialTransform, angle, 0, 0, 1);
+    } completion:^(BOOL finished) {
+
+    }];
+}
+
+//修正添加文字时的方向
+- (void)_fixWordsOrientationAndSize:(CXWordLab *)lab {
+    
+    if (!_editModel.cropModel) {
+        return;
+    }
+    CATransform3D transform = lab.layer.transform;
+    CGFloat angle = 0;
+    switch (_editModel.cropModel.rotationDirection) {
+        case CXCropViewRotationDirectionUp:
+            angle = 0;
+            break;
+        case CXCropViewRotationDirectionLeft:
+            angle = M_PI / 2;
+            break;
+        case CXCropViewRotationDirectionDown:
+            angle = M_PI;
+            break;
+        case CXCropViewRotationDirectionRight:
+            angle = 3 * M_PI / 2;
+            break;
+            
+        default:
+            break;
+    }
+    transform = CATransform3DRotate(transform, angle, 0, 0, 1);
+    transform = CATransform3DScale(transform, 1 / self.scrollVi.zoomScale, 1 / self.scrollVi.zoomScale, 1);
+    lab.layer.transform = transform;
+}
+
+//更新editIgvContainer的遮罩
+- (void)_updateImageContainerMaskLayer {
+    CAShapeLayer *layer = [CAShapeLayer layer];
+    UIBezierPath *path;
+    if (_editModel.cropModel) {
+        //剪裁过
+        path = [UIBezierPath bezierPathWithRect:self.editIgvContainer.bounds];
+    }else {
+        //没有剪裁过
+        path = [UIBezierPath bezierPathWithRect:self.editIgvContainer.bounds];
+    }
+    layer.path = path.CGPath;
+    self.editIgvContainer.layer.mask = layer;
 }
 
 #pragma mark ********* Getter *********

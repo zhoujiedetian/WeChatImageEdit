@@ -23,6 +23,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (instancetype)initWithFrame:(CGRect)frame NS_DESIGNATED_INITIALIZER;
 ///使用image初始化需要赋值frame
 - (instancetype)initWithEditImage:(UIImage *)image NS_DESIGNATED_INITIALIZER;
+
+- (void)clearAllEditHandle;
 @end
 
 NS_ASSUME_NONNULL_END

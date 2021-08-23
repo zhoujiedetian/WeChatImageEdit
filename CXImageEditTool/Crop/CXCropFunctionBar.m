@@ -3,7 +3,6 @@
 //  chengxun
 //
 //  Created by zhoujie on 2021/8/5.
-//  Copyright © 2021 westone. All rights reserved.
 //
 
 #import "CXCropFunctionBar.h"

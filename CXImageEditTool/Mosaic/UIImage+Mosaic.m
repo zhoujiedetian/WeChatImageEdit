@@ -176,14 +176,14 @@
     // 6, 获取图片数据集合
     NSInteger dataLength = width * height * bytesPerRow;
     CGDataProviderRef provider = CGDataProviderCreateWithData(NULL, bitmapData, dataLength, NULL);
-
+    CGBitmapInfo btimainfo = CGImageGetBitmapInfo(imgRef);
     //7, 创建要输出的图像
     CGImageRef mosaicImageRef = CGImageCreate(width, height,
                                               bitsPerComponent,           //表示每一个像素点，每一个分量的大小 8
                                               bitsPerPixel,               //每一个像素点的大小  4 * 8 = 32
                                               width * bytesPerRow,        //每一行内存大小
                                               colorSpace,                 //颜色空间
-                                              kCGBitmapByteOrderDefault,  //位图信息
+                                              btimainfo,  //位图信息
                                               provider,                   //数据源（数据集合）
                                               NULL,                       //数据解码器
                                               NO,                         // 是否抗锯齿
@@ -196,7 +196,7 @@
                                                        bitsPerComponent,
                                                        width * bytesPerRow,
                                                        colorSpace,
-                                                       kCGImageAlphaPremultipliedLast);
+                                                       btimainfo);
 
     CGContextDrawImage(outputContext, CGRectMake(0.0f, 0.0f, width, height), mosaicImageRef); //  //绘制图片
     CGImageRef resultImageRef = CGBitmapContextCreateImage(outputContext);                    // //创建图片

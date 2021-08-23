@@ -80,6 +80,8 @@ typedef NS_ENUM(NSInteger, CXCropCornerType) {
 @property (nonatomic, assign) BOOL isCanRecovery;
 //是否正在拖动剪裁框
 @property(nonatomic, assign) BOOL isPanning;
+//记录此View的初始化transform
+@property(nonatomic, assign) CATransform3D cropInitialTransform;
 @end
 
 @implementation CXCropCase
@@ -107,6 +109,7 @@ typedef NS_ENUM(NSInteger, CXCropCornerType) {
 }
 
 - (void)setUpView {
+    _cropInitialTransform = self.layer.transform;
     self.initialScrollZoomScale = 0.7;
     self.backgroundColor = [UIColor clearColor];
     
@@ -153,6 +156,27 @@ typedef NS_ENUM(NSInteger, CXCropCornerType) {
 }
 
 - (void)_layoutInitialCropCaseAndScrollByCropModel:(CXCropModel *)cropModel {
+    
+    self.rotationDirection = cropModel.rotationDirection;
+    CGFloat angle = 0;
+    switch (_rotationDirection) {
+        case CXCropViewRotationDirectionUp:
+            angle = 0;
+            break;
+        case CXCropViewRotationDirectionLeft:
+            angle = -M_PI / 2;
+            break;
+        case CXCropViewRotationDirectionDown:
+            angle = -M_PI;
+            break;
+        case CXCropViewRotationDirectionRight:
+            angle = -3 * M_PI / 2;
+            break;
+            
+        default:
+            break;
+    }
+    self.layer.transform = CATransform3DRotate(self.cropInitialTransform, angle, 0, 0, 1);
     
     //计算最大剪裁区域
     [self _caculateMaxCropRect];
@@ -899,8 +923,8 @@ typedef NS_ENUM(NSInteger, CXCropCornerType) {
             adjustWidth = adjustHeight * cropCaseWHScale;
         }
     }
-    CGFloat adjustX = self.maxCropRect.origin.x + (CGRectGetWidth(self.maxCropRect) - adjustWidth) * 0.5;
-    CGFloat adjustY = self.maxCropRect.origin.y + (CGRectGetHeight(self.maxCropRect) - adjustHeight) * 0.5;
+    CGFloat adjustX = (self.bounds.size.width - adjustWidth) * 0.5;
+    CGFloat adjustY = (self.bounds.size.height - adjustHeight) * 0.5;
     return CGRectMake(adjustX, adjustY, adjustWidth, adjustHeight);
 }
 
@@ -949,14 +973,6 @@ typedef NS_ENUM(NSInteger, CXCropCornerType) {
     self.maskLayer.fillRule = kCAFillRuleEvenOdd;
     self.maskLayer.path = fillPath.CGPath;
     self.maskLayer.fillColor = CXUIColorFromRGBA(0x000000, 0.6).CGColor;
-    
-    CABasicAnimation *opacity = [CABasicAnimation animationWithKeyPath:@"opacity"];
-    opacity.fromValue = @0;
-    opacity.toValue = @1;
-    opacity.duration = 0.25;
-    opacity.removedOnCompletion = YES;
-    [self.maskLayer addAnimation:opacity forKey:nil];
-    
     [self _checkShouldRecovery];
 }
 

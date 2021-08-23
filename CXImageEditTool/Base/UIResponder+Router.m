@@ -3,7 +3,6 @@
 //  chengxun
 //
 //  Created by zhoujie on 2020/6/30.
-//  Copyright © 2020 westone. All rights reserved.
 //
 
 #import "UIResponder+Router.h"

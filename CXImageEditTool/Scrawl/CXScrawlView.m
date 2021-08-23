@@ -25,6 +25,7 @@
         
         _pan = [[UIPanGestureRecognizer alloc]initWithTarget:self action:@selector(panScrawl:)];
         [self addGestureRecognizer:_pan];
+        
     }
     return self;
 }
@@ -75,7 +76,6 @@
 
     }
 }
-
 
 #pragma mark ********* Draw *********
 - (void)drawRect:(CGRect)rect {
